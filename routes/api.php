@@ -8,5 +8,5 @@ use App\Http\Controllers\MovimientoAfiliadoController;
 Route::get('/afiliados', [AfiliadoController::class, 'index']);
 Route::get('/recompensas', [RecompensaController::class, 'index']);
 Route::get('/movimientos', [MovimientoAfiliadoController::class, 'index']);
-// NUEVA RUTA PARA CANJES
-Route::post('/canjear', [RecompensaController::class, 'canjear']);
+// NUEVA RUTA PARA CANJES CON LÍMITE DE PETICIONES
+Route::post('/canjear', [RecompensaController::class, 'canjear'])->middleware('throttle:3,1');
