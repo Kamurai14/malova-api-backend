@@ -22,4 +22,26 @@ class Afiliado extends Model
             ->where('tipo_movimiento', 'acumulacion')
             ->sum('puntos_delta');
     }
+
+    /**
+     * Accesor para evaluar el nivel automáticamente basado en los puntos históricos.
+     * Sobrescribe el valor estático de la base de datos.
+     */
+    public function getNivelAttribute()
+    {
+        $puntos = $this->puntos_historicos; 
+
+        if ($puntos >= 5000) {
+            return 'platino';
+        } elseif ($puntos >= 3000) {
+            return 'oro';
+        } elseif ($puntos >= 1000) {
+            return 'plata';
+        } elseif ($puntos >= 500) {
+            return 'bronce'; 
+        }
+
+        // De 0 a 499 puntos es Plomero, el nivel base de entrada al programa
+        return 'plomero'; 
+    }
 }

@@ -11,16 +11,23 @@ class RecompensasTableSeeder extends Seeder
     {
         Recompensa::create([
             'nombre' => 'Gorra Malova Oficial',
-            'descripcion' => 'Gorra de trabajo resistente al sol.',
+            'tipo' => 'mercancia',
             'puntos_requeridos' => 100,
-            'tipo' => 'mercancia'
+            'activo' => true
         ]);
 
         Recompensa::create([
-            'nombre' => 'Descuento 10% en Tubería',
-            'descripcion' => 'Aplica para compras de tubería PVC.',
-            'puntos_requeridos' => 200,
-            'tipo' => 'descuento'
+            'nombre' => 'Descuento 10% en Herramientas',
+            'tipo' => 'descuento',
+            'puntos_requeridos' => 500,
+            'activo' => true
+        ]);
+
+        Recompensa::create([
+            'nombre' => 'Bono $200 en Efectivo',
+            'tipo' => 'efectivo',
+            'puntos_requeridos' => 3000,
+            'activo' => true
         ]);
     }
 }

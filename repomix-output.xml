@@ -197,22 +197,6 @@ class MovimientoAfiliadoController extends Controller
 }
 </file>
 
-<file path="app/Models/Afiliado.php">
-<?php
-
-namespace App\Models;
-
-use Illuminate\Database\Eloquent\Model;
-
-class Afiliado extends Model
-{
-
-    // Le decimos a Laravel cuáles columnas de la tabla puede modificar
-    protected $fillable = ['folio', 'nombre', 'nivel', 'saldo_puntos'];
-
-}
-</file>
-
 <file path="app/Models/Recompensa.php">
 <?php
 
@@ -301,62 +285,6 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         //
-    }
-}
-</file>
-
-<file path="app/Services/RecompensaService.php">
-<?php
-
-namespace App\Services;
-
-use Illuminate\Support\Facades\DB;
-use App\Models\Recompensa;
-use App\Models\Afiliado;
-use App\Models\MovimientoAfiliado;
-use Exception;
-
-class RecompensaService
-{
-    public function procesarCanje(int $afiliadoId, int $recompensaId)
-    {
-        $afiliado = Afiliado::find($afiliadoId);
-        $recompensa = Recompensa::find($recompensaId);
-
-        if (!$afiliado || !$recompensa) {
-            throw new Exception('Afiliado o Recompensa no encontrados', 404);
-        }
-
-        if ($afiliado->saldo_puntos < $recompensa->puntos_requeridos) {
-            throw new Exception('Puntos insuficientes para este canje', 400);
-        }
-
-        DB::beginTransaction();
-
-        try {
-            $afiliado->saldo_puntos -= $recompensa->puntos_requeridos;
-            $afiliado->save();
-
-            MovimientoAfiliado::create([
-                'afiliado_id' => $afiliado->id,
-                'tipo_movimiento' => 'canje',
-                'puntos_delta' => -$recompensa->puntos_requeridos,
-                'concepto' => 'Canje: ' . $recompensa->nombre,
-            ]);
-
-            DB::commit();
-
-            return [
-                'success' => true, 
-                'message' => '¡Recompensa canjeada con éxito!',
-                'nuevo_saldo' => $afiliado->saldo_puntos
-            ];
-
-        } catch (Exception $e) {
-            DB::rollBack();
-            // Propagamos el error para que el controlador decida qué hacer
-            throw new Exception('Error interno al procesar el canje: ' . $e->getMessage(), 500);
-        }
     }
 }
 </file>
@@ -2181,27 +2109,6 @@ class DatabaseSeeder extends Seeder
 }
 </file>
 
-<file path="database/seeders/MovimientosTableSeeder.php">
-<?php
-
-namespace Database\Seeders;
-
-use Illuminate\Database\Seeder;
-use App\Models\MovimientoAfiliado;
-
-class MovimientosTableSeeder extends Seeder
-{
-    public function run()
-    {
-        MovimientoAfiliado::create([
-            'afiliado_id' => 1, // Se lo asignamos a Juan Pérez
-            'tipo_movimiento' => 'acumulacion',
-            'puntos_delta' => 150
-        ]);
-    }
-}
-</file>
-
 <file path="database/seeders/RecompensasTableSeeder.php">
 <?php
 
@@ -2216,16 +2123,23 @@ class RecompensasTableSeeder extends Seeder
     {
         Recompensa::create([
             'nombre' => 'Gorra Malova Oficial',
-            'descripcion' => 'Gorra de trabajo resistente al sol.',
+            'tipo' => 'mercancia',
             'puntos_requeridos' => 100,
-            'tipo' => 'mercancia'
+            'activo' => true
         ]);
 
         Recompensa::create([
-            'nombre' => 'Descuento 10% en Tubería',
-            'descripcion' => 'Aplica para compras de tubería PVC.',
-            'puntos_requeridos' => 200,
-            'tipo' => 'descuento'
+            'nombre' => 'Descuento 10% en Herramientas',
+            'tipo' => 'descuento',
+            'puntos_requeridos' => 500,
+            'activo' => true
+        ]);
+
+        Recompensa::create([
+            'nombre' => 'Bono $200 en Efectivo',
+            'tipo' => 'efectivo',
+            'puntos_requeridos' => 3000,
+            'activo' => true
         ]);
     }
 }
@@ -3055,6 +2969,34 @@ export default defineConfig({
 });
 </file>
 
+<file path="app/Models/Afiliado.php">
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use App\Models\MovimientoAfiliado;
+
+class Afiliado extends Model
+{
+    protected $fillable = ['folio', 'nombre', 'nivel', 'saldo_puntos'];
+
+    // Le decimos a Laravel que SIEMPRE adjunte este campo virtual cuando hagamos un Afiliado::all() o Afiliado::find()
+    protected $appends = ['puntos_historicos'];
+
+    /**
+     * Accesor para calcular los puntos históricos.
+     * Suma todos los 'puntos_delta' de los movimientos que sean 'acumulacion'.
+     */
+    public function getPuntosHistoricosAttribute()
+    {
+        return MovimientoAfiliado::where('afiliado_id', $this->id)
+            ->where('tipo_movimiento', 'acumulacion')
+            ->sum('puntos_delta');
+    }
+}
+</file>
+
 <file path="app/Models/MovimientoAfiliado.php">
 <?php
 
@@ -3066,6 +3008,72 @@ class MovimientoAfiliado extends Model
 {
     protected $table = 'movimientos_afiliados';
     protected $fillable = ['afiliado_id', 'tipo_movimiento', 'puntos_delta', 'concepto', 'recompensa_id'];
+}
+</file>
+
+<file path="app/Services/RecompensaService.php">
+<?php
+
+namespace App\Services;
+
+use Illuminate\Support\Facades\DB;
+use App\Models\Recompensa;
+use App\Models\Afiliado;
+use App\Models\MovimientoAfiliado;
+use Exception;
+
+class RecompensaService
+{
+    public function procesarCanje(int $afiliadoId, int $recompensaId)
+    {
+        // 1. Buscamos la recompensa (esto no necesita bloqueo porque su costo no cambia)
+        $recompensa = Recompensa::find($recompensaId);
+        
+        if (!$recompensa) {
+            throw new Exception('Recompensa no encontrada', 404);
+        }
+
+        // 2. Iniciamos la transacción ANTES de buscar al afiliado
+        DB::beginTransaction();
+
+        try {
+            // 3. BLOQUEO PESIMISTA: Leemos el saldo y bloqueamos la fila hasta hacer el commit
+            $afiliado = Afiliado::where('id', $afiliadoId)->lockForUpdate()->first();
+
+            if (!$afiliado) {
+                throw new Exception('Afiliado no encontrado', 404);
+            }
+
+            if ($afiliado->saldo_puntos < $recompensa->puntos_requeridos) {
+                throw new Exception('Puntos insuficientes para este canje', 400);
+            }
+
+            // Descontamos y guardamos
+            $afiliado->saldo_puntos -= $recompensa->puntos_requeridos;
+            $afiliado->save();
+
+            MovimientoAfiliado::create([
+                'afiliado_id' => $afiliado->id,
+                'tipo_movimiento' => 'canje',
+                'puntos_delta' => -$recompensa->puntos_requeridos,
+                'concepto' => 'Canje: ' . $recompensa->nombre,
+            ]);
+
+            DB::commit();
+
+            return [
+                'success' => true, 
+                'message' => '¡Recompensa canjeada con éxito!',
+                'nuevo_saldo' => $afiliado->saldo_puntos
+            ];
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            // Respetamos el código de error original (400, 404) si lo mandamos nosotros
+            $codigo = $e->getCode() ?: 500;
+            throw new Exception($e->getMessage(), $codigo);
+        }
+    }
 }
 </file>
 
@@ -3089,6 +3097,45 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withExceptions(function (Exceptions $exceptions): void {
         //
     })->create();
+</file>
+
+<file path="database/seeders/MovimientosTableSeeder.php">
+<?php
+
+namespace Database\Seeders;
+
+use Illuminate\Database\Seeder;
+use App\Models\MovimientoAfiliado;
+
+class MovimientosTableSeeder extends Seeder
+{
+    public function run()
+    {
+        // Movimiento inicial para Juan Pérez (id: 1) que tiene 150 de saldo
+        MovimientoAfiliado::create([
+            'afiliado_id' => 1,
+            'tipo_movimiento' => 'acumulacion',
+            'puntos_delta' => 150,
+            'concepto' => 'Bono de bienvenida'
+        ]);
+
+        // Movimiento inicial para María García (id: 2) que tiene 300 de saldo
+        MovimientoAfiliado::create([
+            'afiliado_id' => 2,
+            'tipo_movimiento' => 'acumulacion',
+            'puntos_delta' => 300,
+            'concepto' => 'Bono de bienvenida'
+        ]);
+
+        // Movimiento inicial para Carlos López (id: 3) que tiene 50 de saldo
+        MovimientoAfiliado::create([
+            'afiliado_id' => 3,
+            'tipo_movimiento' => 'acumulacion',
+            'puntos_delta' => 50,
+            'concepto' => 'Bono de bienvenida'
+        ]);
+    }
+}
 </file>
 
 <file path="composer.json">
