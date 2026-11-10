@@ -12,20 +12,29 @@ class RecompensaService
 {
     public function procesarCanje(int $afiliadoId, int $recompensaId)
     {
-        $afiliado = Afiliado::find($afiliadoId);
+        // 1. Buscamos la recompensa (esto no necesita bloqueo porque su costo no cambia)
         $recompensa = Recompensa::find($recompensaId);
-
-        if (!$afiliado || !$recompensa) {
-            throw new Exception('Afiliado o Recompensa no encontrados', 404);
+        
+        if (!$recompensa) {
+            throw new Exception('Recompensa no encontrada', 404);
         }
 
-        if ($afiliado->saldo_puntos < $recompensa->puntos_requeridos) {
-            throw new Exception('Puntos insuficientes para este canje', 400);
-        }
-
+        // 2. Iniciamos la transacción ANTES de buscar al afiliado
         DB::beginTransaction();
 
         try {
+            // 3. BLOQUEO PESIMISTA: Leemos el saldo y bloqueamos la fila hasta hacer el commit
+            $afiliado = Afiliado::where('id', $afiliadoId)->lockForUpdate()->first();
+
+            if (!$afiliado) {
+                throw new Exception('Afiliado no encontrado', 404);
+            }
+
+            if ($afiliado->saldo_puntos < $recompensa->puntos_requeridos) {
+                throw new Exception('Puntos insuficientes para este canje', 400);
+            }
+
+            // Descontamos y guardamos
             $afiliado->saldo_puntos -= $recompensa->puntos_requeridos;
             $afiliado->save();
 
@@ -46,8 +55,9 @@ class RecompensaService
 
         } catch (Exception $e) {
             DB::rollBack();
-            // Propagamos el error para que el controlador decida qué hacer
-            throw new Exception('Error interno al procesar el canje: ' . $e->getMessage(), 500);
+            // Respetamos el código de error original (400, 404) si lo mandamos nosotros
+            $codigo = $e->getCode() ?: 500;
+            throw new Exception($e->getMessage(), $codigo);
         }
     }
 }
